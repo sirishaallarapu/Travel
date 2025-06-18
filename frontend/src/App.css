@@ -1,0 +1,99 @@
+.app {
+    display: flex;
+    height: 100vh;
+}
+
+/* Responsive Design */
+@media (max-width: 768px) {
+    .app {
+        flex-direction: column;
+    }
+
+    .sidebar {
+        width: 100%;
+        height: auto;
+        position: relative;
+        box-shadow: none;
+    }
+
+    .main-content {
+        padding: 15px;
+    }
+}
+
+/* Outer Container */
+.app-container {
+  display: flex;
+  flex-direction: column;
+  min-height: 100vh;
+  background: linear-gradient(to right, #dff6ff, #e6faff);
+  font-family: 'Segoe UI', sans-serif;
+}
+
+/* Header */
+.app-header {
+  padding: 20px;
+  text-align: center;
+  background-color: #ffffff;
+  border-bottom: 1px solid #ccc;
+}
+
+.app-header h1 {
+  margin: 0;
+  font-size: 28px;
+  color: #005c99;
+}
+
+.app-subtitle {
+  font-size: 14px;
+  color: #666;
+  margin-top: 5px;
+}
+
+/* Main Layout: Sidebar + Main Content */
+.app-body {
+  display: flex;
+  flex-grow: 1;
+  padding: 20px;
+  box-sizing: border-box;
+}
+
+/* Sidebar */
+.sidebar {
+  width: 300px;
+  background-color: #ffffff;
+  padding: 20px;
+  box-shadow: 2px 0 5px rgba(0, 0, 0, 0.05);
+  overflow: visible; /* ✅ prevent its own scroll */
+  flex-shrink: 0;
+}
+
+/* Main Content */
+.main-content {
+  flex: 1;
+  padding: 20px;
+  background-color: transparent;
+  overflow: visible; /* ✅ prevent internal scrolling */
+}
+.header-with-logo {
+  display: flex;
+  align-items: center;
+  justify-content: center; /* Center the heading and logo horizontally */
+  margin-bottom: 20px;
+  gap: 10px; /* Space between logo and heading */
+}
+
+.logo-img {
+  width: 40px;
+  height: 40px;
+  object-fit: contain;
+}
+
+.main-heading {
+  font-size: 2rem;
+  font-weight: bold;
+  color: #1e40af;
+  text-align: center;
+}
+
+

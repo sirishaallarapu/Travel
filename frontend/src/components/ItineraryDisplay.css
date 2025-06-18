@@ -1,0 +1,172 @@
+/* ==== Container and Header Styling ==== */
+.itinerary-container {
+  background: #ffffff;
+  padding: 20px;
+  border-radius: 8px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.1);
+}
+
+.itinerary-title {
+  font-size: 1.8rem;
+  font-weight: bold;
+  color: #1e40af;
+  margin-bottom: 10px;
+  text-align: center;
+}
+
+.vibe {
+  font-style: italic;
+  color: #4b5563;
+  text-align: center;
+  margin-bottom: 15px;
+}
+
+/* ==== Day and Content Styling ==== */
+.day-heading {
+  font-size: 1.4rem;
+  font-weight: bold;
+  color: #0d9488;
+  margin: 15px 0 10px;
+}
+
+.section {
+  font-weight: bold;
+  color: #374151;
+  margin: 5px 0;
+}
+
+.section-title {
+  font-weight: bold;
+  color: #374151;
+  margin: 10px 0 5px;
+}
+
+.item {
+  margin: 2px 0 2px 20px;
+  color: #4b5563;
+}
+
+.total-cost {
+  font-size: 1.2rem;
+  font-weight: bold;
+  color: #1e40af;
+  margin-top: 15px;
+  text-align: center;
+}
+
+.no-itinerary {
+  color: #6b7280;
+  text-align: center;
+  margin-top: 20px;
+}
+
+/* ==== Button Styling ==== */
+.pdf-button {
+  background: linear-gradient(to right, #1e40af, #0d9488);
+  color: #ffffff;
+  padding: 8px 16px;
+  border: none;
+  border-radius: 5px;
+  font-size: 0.9rem;
+  cursor: pointer;
+  margin-bottom: 15px;
+  display: block;
+  margin-left: auto;
+  margin-right: auto;
+}
+
+.pdf-button:hover {
+  opacity: 0.9;
+}
+
+.book-link {
+  color: #007bff;
+  font-weight: bold;
+  text-decoration: underline;
+}
+
+.book-link:hover {
+  color: #0056b3;
+}
+
+/* ==== PDF Styling ==== */
+.itinerary-pdf {
+  font-family: 'Times New Roman', serif;
+  font-size: 12pt;
+  padding: 20mm 15mm 25mm 15mm; /* top, right, bottom, left */
+  position: relative;
+  min-height: 210mm; /* A4 landscape height */
+  width: 297mm; /* A4 landscape width */
+  background-color: white;
+  box-sizing: border-box;
+  color: #000;
+}
+
+.itinerary-pdf::before {
+  content: "";
+  position: absolute;
+  top: 10mm;
+  right: 10mm;
+  width: 50mm;
+  height: auto;
+  background-image: url('/assets/infologo1.png');
+  background-repeat: no-repeat;
+  background-size: contain;
+  opacity: 0.1;
+  pointer-events: none;
+  z-index: 0;
+}
+
+.itinerary-content {
+  position: relative;
+  z-index: 1;
+}
+
+.itinerary-pdf h1 {
+  font-weight: bold;
+  font-size: 18pt;
+  margin-bottom: 0.5em;
+}
+
+.itinerary-pdf h3 {
+  font-style: italic;
+  margin-top: 0;
+  margin-bottom: 1em;
+}
+
+.itinerary-pdf pre {
+  white-space: pre-wrap;
+  font-family: 'Times New Roman', serif;
+  font-size: 12pt;
+  line-height: 1.4;
+  margin: 0;
+}
+
+.footer {
+  position: absolute;
+  bottom: 10mm;
+  width: 100%;
+  font-size: 10pt;
+  color: #666;
+  text-align: center;
+  z-index: 1;
+}
+.logo-title-wrap {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+}
+
+.itinerary-logo {
+  height: 40px;
+  object-fit: contain;
+}
+
+.total-budget {
+  font-size: 1.2rem;
+  font-weight: bold;
+  color: #1e40af;
+  text-align: center;
+  margin-top: 20px;
+}
