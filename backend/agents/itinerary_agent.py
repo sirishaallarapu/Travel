@@ -96,6 +96,7 @@ class ItineraryAgent:
         except Exception as e:
             logger.error(f"Error caching data for {destination}/{data_type}: {str(e)}\n{traceback.format_exc()}")
 
+
     def get_hotels(self, destination, start_date, budget, retries=3, backoff_factor=5):
         cached_hotels = self.get_cached_data(destination, "hotels")
         if cached_hotels:
@@ -238,25 +239,11 @@ class ItineraryAgent:
                 continue
 
             # Handle day headings
-            # Gemini format: "**Day X – YYYY-MM-DD: Description**"
-            gemini_day_match = re.match(r"\*\*Day (\d+) – (\d{4}-\d{2}-\d{2}): (.+?)\*\*", line)
-            # Simpler format: "Day X – YYYY-MM-DD" or "Day X – YYYY-MM-DD: Description"
-            simple_day_match = re.match(r"Day (\d+) – (\d{4}-\d{2}-\d{2})(?:: (.+))?", line)
-            
-            if gemini_day_match:
-                day_num, date, _ = gemini_day_match.groups()
-                current_day = f"Day {day_num} – {date}"
-                itinerary_dict[current_day] = {
-                    "Transportation": [],
-                    "Accommodation": [],
-                    "Planned Activities": [],
-                    "Meals": [],
-                    "Total Cost": None
-                }
-                current_section = None
-                continue
-            elif simple_day_match:
-                day_num, date, _ = simple_day_match.groups()
+            # Gemini format: "**Day X – YYYY-MM-DD: Description**" or "Day X – YYYY-MM-DD"
+            day_match = re.match(r"(\*\*Day (\d+) – (\d{4}-\d{2}-\d{2}):?.*?\*\*|Day (\d+) – (\d{4}-\d{2}-\d{2})(?:: (.+))?)", line)
+            if day_match:
+                day_num = day_match.group(2) or day_match.group(4)
+                date = day_match.group(3) or day_match.group(5)
                 current_day = f"Day {day_num} – {date}"
                 itinerary_dict[current_day] = {
                     "Transportation": [],
@@ -272,41 +259,35 @@ class ItineraryAgent:
                 continue
 
             # Handle section headers
-            # Gemini format: "**Transportation:**" or "* **Transportation:**"
-            # Simpler format: "Transportation:"
-            if re.match(r"(\* )?\*\*Transportation:\*\*", line) or line.startswith("Transportation:"):
+            if re.match(r"(\*\*Transportation:\*\*|Transportation:)", line):
                 current_section = "Transportation"
-                line = re.sub(r"(\* )?\*\*Transportation:\*\*", "Transportation:", line).replace("Transportation:", "").strip()
+                line = re.sub(r"(\*\*Transportation:\*\*|Transportation:)", "", line).strip()
                 if line:
                     itinerary_dict[current_day][current_section].append(f"Transportation: {line}")
-            elif re.match(r"(\* )?\*\*Accommodation:\*\*", line) or line.startswith("Accommodation:"):
+            elif re.match(r"(\*\*Accommodation:\*\*|Accommodation:)", line):
                 current_section = "Accommodation"
-                line = re.sub(r"(\* )?\*\*Accommodation:\*\*", "Accommodation:", line).replace("Accommodation:", "").strip()
+                line = re.sub(r"(\*\*Accommodation:\*\*|Accommodation:)", "", line).strip()
                 if line:
                     itinerary_dict[current_day][current_section].append(f"Accommodation: {line}")
-            elif re.match(r"(\* )?\*\*Planned Activities:\*\*", line) or line.startswith("Planned Activities:"):
+            elif re.match(r"(\*\*Planned Activities:\*\*|Planned Activities:)", line):
                 current_section = "Planned Activities"
-            elif re.match(r"(\* )?\*\*Meals for the Day:\*\*", line) or line.startswith("Meals for the Day:"):
+            elif re.match(r"(\*\*Meals for the Day:\*\*|Meals for the Day:)", line):
                 current_section = "Meals"
-            elif re.match(r"(\* )?\*\*Total Estimated Cost for the Day:\*\*", line) or line.startswith("Total Estimated Cost for the Day:"):
+            elif re.match(r"(\*\*Total Estimated Cost for the Day:\*\*|Total Estimated Cost for the Day:)", line):
                 current_section = None
-                cost = re.sub(r"(\* )?\*\*Total Estimated Cost for the Day:\*\*", "", line).replace("Total Estimated Cost for the Day:", "").strip()
+                cost = re.sub(r"(\*\*Total Estimated Cost for the Day:\*\*|Total Estimated Cost for the Day:)", "", line).strip()
                 itinerary_dict[current_day]["Total Cost"] = f"Total Estimated Cost for the Day: {cost}"
+
             # Handle items under sections
             elif current_section:
-                # Gemini format: "* **Morning (9:00 AM):** ..." or "* Morning: ..."
-                # Simpler format: "**Morning (9:00 AM):** ..." or "Breakfast: ..."
-                if re.match(r"\* \*\*(Morning|Afternoon|Evening)\b", line) or re.match(r"\* (Breakfast|Lunch|Dinner)\b", line):
-                    cleaned_line = re.sub(r"^\* \*\*|\*\*$", "", line).strip()
+                if re.match(r"(\*\*(Morning|Afternoon|Evening)\b|\* (Breakfast|Lunch|Dinner)\b)", line):
+                    cleaned_line = re.sub(r"^\*\*|\*\*$|\* ", "", line).strip()
                     itinerary_dict[current_day][current_section].append(cleaned_line)
-                elif line.startswith("* ") or line.startswith("    * "):
-                    cleaned_line = re.sub(r"^\*+\s*|\s*\*+$", "", line).strip()
+                elif line.startswith("- ") or line.startswith("* "):
+                    cleaned_line = re.sub(r"^- |\* ", "", line).strip()
                     if cleaned_line:
                         itinerary_dict[current_day][current_section].append(cleaned_line)
-                elif re.match(r"\*\*(Morning|Afternoon|Evening)\b", line) or line.startswith("Breakfast:") or line.startswith("Lunch:") or line.startswith("Dinner:"):
-                    cleaned_line = re.sub(r"^\*\*|\*\*$", "", line).strip()
-                    itinerary_dict[current_day][current_section].append(cleaned_line)
-        
+
         return itinerary_dict
 
     def generate_itinerary(self, destination, start_date, duration, trip_type, food_preference, num_members, budget):
@@ -380,13 +361,13 @@ Day 1 – 23 June 2025: Arrival and Beach Relaxation
 Transportation: Arrival at Velana International Airport (MLE). Ferry to Hulhumalé (approx. 15 minutes).  
 Accommodation: Hulhumalé Hotel (Budget-friendly guesthouse, clean rooms). Price: ₹3000 per night.  
 Planned Activities:  
-Morning – Airport Transfer & Check-in: Transfer to Hulhumalé by ferry. Check in to the hotel. Cost: ₹200 (ferry)  
-Afternoon – Hulhumalé Beach Relaxation: Relax on the pristine beach, enjoy the turquoise waters. Cost: ₹0  
-Evening – Sunset Stroll: Walk along the beach and enjoy the sunset. Cost: ₹0  
+- Morning – Airport Transfer & Check-in: Transfer to Hulhumalé by ferry. Check in to the hotel. Cost: ₹200  
+- Afternoon – Hulhumalé Beach Relaxation: Relax on the pristine beach, enjoy the turquoise waters. Cost: ₹0  
+- Evening – Sunset Stroll: Walk along the beach and enjoy the sunset. Cost: ₹0  
 Meals for the Day:  
-Breakfast – Hotel: Basic breakfast provided. Cost: Included  
-Lunch – Local Eatery near beach: Vegetarian snacks and fresh juices. Cost: ₹300  
-Dinner – Local Restaurant: Vegetarian curry and rice. Cost: ₹500  
+- Breakfast – Hotel: Basic breakfast provided. Cost: Included  
+- Lunch – Local Eatery near beach: Vegetarian snacks and fresh juices. Cost: ₹300  
+- Dinner – Local Restaurant: Vegetarian curry and rice. Cost: ₹500  
 Total Estimated Cost for the Day: ₹3500
 """
 
@@ -397,17 +378,17 @@ You are a professional travel assistant. Generate a rich, engaging, clearly stru
 Your Trip Itinerary  
 Vibe: A {trip_type.lower()} trip in {destination}
 
-Day 1 – <Formatted Date>: Arrival and Initial Exploration  
+Day 1 – {start_date}: Arrival and Initial Exploration  
 Transportation: <Arrival/movement info specific to {destination}>  
 Accommodation: <Hotel name, type, quality, price>  
 Planned Activities:  
-Morning – <Activity>: <desc specific to {destination}>. Cost: ₹____  
-Afternoon – <Activity>: <desc specific to {destination}>. Cost: ₹____  
-Evening – <Activity>: <desc specific to {destination}>. Cost: ₹____  
+- Morning – <Activity>: <desc specific to {destination}>. Cost: ₹____  
+- Afternoon – <Activity>: <desc specific to {destination}>. Cost: ₹____  
+- Evening – <Activity>: <desc specific to {destination}>. Cost: ₹____  
 Meals for the Day:  
-Breakfast – <Where>: <desc>. Cost: ₹____  
-Lunch – <Where>: <desc>. Cost: ₹____  
-Dinner – <Where>: <desc>. Cost: ₹____  
+- Breakfast – <Where>: <desc>. Cost: ₹____  
+- Lunch – <Where>: <desc>. Cost: ₹____  
+- Dinner – <Where>: <desc>. Cost: ₹____  
 Total Estimated Cost for the Day: ₹____
 ---
 
@@ -421,6 +402,7 @@ Total Estimated Cost for the Day: ₹____
 - Strictly adhere to the budget: {budget.lower()}. For 'low' budget, keep daily costs under ₹10,000 per person; for 'high' budget, costs can be higher but should be reasonable for a luxury experience.
 - Generate the itinerary for exactly {num_members} traveler(s). Do not assume a different number of travelers.
 - Generate for {duration} days starting from {start_date}.
+- Use the exact format: "**Day X – YYYY-MM-DD:** Description" for each day, followed by "Transportation:", "Accommodation:", "Planned Activities:", "Meals for the Day:", and "Total Estimated Cost for the Day:" with bullet points ("- ") for items.
 - Include realistic costs in INR (₹).
 - If you cannot generate a valid itinerary for {destination}, return a message indicating the failure.
 
@@ -432,11 +414,10 @@ Start Date: {start_date}
 Budget: {budget}  
 Travelers: {num_members}
 """
-
         try:
             response = model.generate_content(prompt)
             raw_text = response.text.strip()
-            logger.info(f"Gemini response: {raw_text}")
+            logger.info(f"Full Gemini response: {raw_text}")  # Log the full response for debugging
 
             # Check if Gemini hallucinated the wrong destination
             if destination.lower() not in raw_text.lower():
