@@ -17,7 +17,7 @@ def call_gemini(prompt: str, max_tokens: int = 150, temperature: float = 0.7) ->
     Call Gemini API to generate text from a prompt.
     """
     try:
-        url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent"
+        url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent"
         params = {"key": GEMINI_API_KEY}
         payload = {
             "contents": [{"parts": [{"text": prompt}]}],

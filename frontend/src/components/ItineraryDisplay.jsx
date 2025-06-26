@@ -1,142 +1,188 @@
-import React from 'react';
-import './ItineraryDisplay.css';
+import React, { useState, useEffect } from 'react';
+import {
+  Card, CardContent, Typography, Box, Button
+} from '@mui/material';
+import EventIcon from '@mui/icons-material/Event';
+import FlightIcon from '@mui/icons-material/Flight';
+import HotelIcon from '@mui/icons-material/Hotel';
+import LocalActivityIcon from '@mui/icons-material/LocalActivity';
+import RestaurantIcon from '@mui/icons-material/Restaurant';
+import CurrencyRupeeIcon from '@mui/icons-material/CurrencyRupee';
 
-function ItineraryDisplay({ itinerary, vibe, destination = "Your Destination", totalBudget }) {
-  // Convert the itinerary dictionary to a string format for rendering
-  let itineraryString = '';
-  if (itinerary && typeof itinerary === 'object' && !Array.isArray(itinerary)) {
-    Object.entries(itinerary).forEach(([day, sections]) => {
-      if (sections.Error) {
-        itineraryString += `${day}\n${sections.Error.join('\n')}\n\n`;
-        return;
-      }
+const ItineraryDisplay = ({
+  itinerary,
+  vibe,
+  destination,
+  total_budget,
+  num_members,
+  meta,
+  flights_and_transfers,
+  hotel,
+}) => {
+  const safeKeys = obj =>
+    obj && typeof obj === 'object' && !Array.isArray(obj)
+      ? Object.keys(obj)
+      : [];
 
-      itineraryString += `${day}\n`;
-      if (sections["Transportation"]?.length > 0) {
-        itineraryString += `${sections["Transportation"].join('\n')}\n`;
-      }
-      if (sections["Accommodation"]?.length > 0) {
-        itineraryString += `${sections["Accommodation"].join('\n')}\n`;
-      }
-      if (sections["Planned Activities"]?.length > 0) {
-        itineraryString += "Planned Activities:\n";
-        itineraryString += sections["Planned Activities"].map(item => `${item}`).join('\n') + '\n';
-      }
-      if (sections["Meals"]?.length > 0) {
-        itineraryString += "Meals for the Day:\n";
-        itineraryString += sections["Meals"].map(item => `${item}`).join('\n') + '\n';
-      }
-      if (sections["Total Cost"]) {
-        itineraryString += `${sections["Total Cost"]}\n`;
-      }
-      itineraryString += '\n';
+  const days = safeKeys(itinerary);
+  const [activeDay, setActiveDay] = useState('');
+
+  useEffect(() => {
+    if (days.length && !activeDay) {
+      setActiveDay(days[0]);
+    }
+    console.log("Summary prop:", meta?.summary);  // Debug log
+  }, [days, activeDay, meta?.summary]);
+
+  const formatDate = dateStr =>
+    new Date(dateStr).toLocaleDateString('en-US', {
+      weekday: 'short',
+      month: 'short',
+      day: 'numeric',
+      year: 'numeric'
     });
-  }
 
-  if (!itineraryString) {
-    return <p className="no-itinerary">Enter your details for your dream trip itinerary</p>;
-  }
+  const handleDayChange = day => setActiveDay(day);
 
-  const lines = itineraryString.split('\n');
-  const elements = [];
-  let finalTotal = totalBudget !== null ? `Total Trip Budget: ₹${totalBudget}` : 'Total Trip Budget: Not available due to itinerary generation failure.';
-  const urlRegex = /(https?:\/\/[^\s]+)/;
+  const renderDayPlan = () => {
+    if (!activeDay || !itinerary?.[activeDay]) return null;
 
-  lines.forEach((line, idx) => {
-    const trimmed = line.trim().toLowerCase();
+    const data = itinerary[activeDay];
+    const dateMatch = activeDay.match(/Day \d+ – (\d{4}-\d{2}-\d{2})/);
+    const dateStr = dateMatch ? dateMatch[1] : '';
 
-    // Skip repeated heading lines
-    if (trimmed.startsWith('your trip itinerary') || trimmed.startsWith('vibe:') || trimmed.startsWith('destination:')) {
-      return;
+    const costLine = data['Total Cost']?.[0] || '';
+    const costMatch = costLine.match(/~₹([\d,]+)/);
+    const cost = costMatch ? costMatch[1] : '0';
+    if (!costMatch) {
+      console.warn(`Failed to parse cost from "${costLine}" for ${activeDay}`);
     }
 
-    // Handle total cost at the end (already handled via totalBudget prop)
-    if (trimmed.startsWith('total trip budget')) {
-      return; // Skip since we're using the totalBudget prop
-    }
+    return (
+      <Card>
+        <CardContent>
+          <Typography variant="subtitle1" gutterBottom>
+            {formatDate(dateStr)}
+          </Typography>
 
-    // Handle links
-    const match = line.match(urlRegex);
-    if (match) {
-      const url = match[0];
-      const textBefore = line.replace(url, '').trim();
-      elements.push(
-        <p key={idx} className="item">
-          {textBefore}{' '}
-          <a href={url} target="_blank" rel="noopener noreferrer" className="book-link">
-            Book Now
-          </a>
-        </p>
-      );
-      return;
-    }
+          <Box mt={2}>
+            <Typography variant="h6" display="flex" alignItems="center" gutterBottom>
+              <EventIcon sx={{ mr: 1 }} /> Day Plan:
+            </Typography>
+            <Typography variant="body2" mb={2}>
+              {data['Day Plan']?.[0] || 'Not specified'}
+            </Typography>
+          </Box>
 
-    // Day headings
-    if (line.startsWith('Day')) {
-      elements.push(<h3 key={idx} className="day-heading">{line}</h3>);
-    }
-    // Section headers
-    else if (line.startsWith('Transportation:') || line.startsWith('Accommodation:')) {
-      elements.push(<p key={idx} className="section">{line}</p>);
-    }
-    else if (line.startsWith('Planned Activities:') || line.startsWith('Meals for the Day:')) {
-      elements.push(<p key={idx} className="section-title">{line}</p>);
-    }
-    else if (line.startsWith('Total Estimated Cost for the Day')) {
-      elements.push(<p key={idx} className="day-total">{line}</p>);
-    }
-    // List items or normal text
-    else {
-      elements.push(<p key={idx} className="item">{line}</p>);
-    }
-  });
+          {data['Flights & Transfers']?.length > 0 && (
+            <Box mt={2}>
+              <Typography variant="h6" display="flex" alignItems="center" gutterBottom>
+                <FlightIcon sx={{ mr: 1 }} /> Flights & Transfers:
+              </Typography>
+              <ul style={{ paddingLeft: 20 }}>
+                {data['Flights & Transfers'].map((item, i) => (
+                  <li key={i}><Typography variant="body2">{item}</Typography></li>
+                ))}
+              </ul>
+            </Box>
+          )}
 
-  async function handleDownloadPDF() {
-    try {
-      const response = await fetch('http://localhost:8000/api/generate-pdf', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ itinerary }),
-      });
+          {data['Hotel']?.length > 0 && (
+            <Box mt={2}>
+              <Typography variant="h6" display="flex" alignItems="center" gutterBottom>
+                <HotelIcon sx={{ mr: 1 }} /> Hotel:
+              </Typography>
+              <ul style={{ paddingLeft: 20 }}>
+                {data['Hotel'].map((h, i) => (
+                  <li key={i}><Typography variant="body2">{h}</Typography></li>
+                ))}
+              </ul>
+            </Box>
+          )}
 
-      if (!response.ok) {
-        alert('Failed to generate PDF');
-        return;
-      }
+          {data['Activity']?.length > 0 && (
+            <Box mt={2}>
+              <Typography variant="h6" display="flex" alignItems="center" gutterBottom>
+                <LocalActivityIcon sx={{ mr: 1 }} /> Activity:
+              </Typography>
+              <ul style={{ paddingLeft: 20 }}>
+                {data['Activity'].map((act, i) => (
+                  <li key={i}><Typography variant="body2">{act}</Typography></li>
+                ))}
+              </ul>
+            </Box>
+          )}
 
-      const blob = await response.blob();
-      const url = window.URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = `trip_itinerary.pdf`;
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
-      window.URL.revokeObjectURL(url);
-    } catch (error) {
-      console.error('Error downloading PDF:', error);
-      alert('Error occurred while downloading PDF');
-    }
-  }
+          {data['Meals']?.length > 0 && (
+            <Box mt={2}>
+              <Typography variant="h6" display="flex" alignItems="center" gutterBottom>
+                <RestaurantIcon sx={{ mr: 1 }} /> Meals:
+              </Typography>
+              <ul style={{ paddingLeft: 20 }}>
+                {data['Meals'].map((meal, i) => (
+                  <li key={i}><Typography variant="body2">{meal}</Typography></li>
+                ))}
+              </ul>
+            </Box>
+          )}
+
+          {data['Total Cost']?.[0] && (
+            <Box mt={2}>
+              <Typography variant="h6" display="flex" alignItems="center" gutterBottom>
+                <CurrencyRupeeIcon sx={{ mr: 1 }} /> {data['Total Cost'][0]}
+              </Typography>
+            </Box>
+          )}
+        </CardContent>
+      </Card>
+    );
+  };
 
   return (
-    <div className="itinerary-container fade-in">
-      <h2 className="itinerary-title">Your Trip Itinerary</h2>
-      {vibe && <p className="vibe"><em>Vibe: {vibe}</em></p>}
-
-      <div className="itinerary-body">{elements}</div>
-
-      {finalTotal && (
-        <p className="final-total">{finalTotal}</p>
+    <Box sx={{ p: 2, backgroundColor: '#f9fbff' }}>
+      {meta?.note && (
+        <Typography variant="body2" color="error" gutterBottom sx={{ mb: 1 }}>
+          {meta.note}
+        </Typography>
       )}
+      <Typography variant="caption" color="textSecondary" gutterBottom>
+        Today's date and time is 2:22 AM IST on Thursday, June 26, 2025.
+      </Typography>
+      {days.length > 0 && (
+        <>
+          <Typography
+            variant="h4"
+            gutterBottom
+            sx={{ fontWeight: 'bold', fontSize: '2rem', mb: 2 }}
+          >
+            <em style={{ fontSize: '1.1rem' }}>{vibe} trip in {destination} – Destination</em>
+          </Typography>
 
-      <div className="itinerary-footer">
-        <button className="pdf-button" onClick={handleDownloadPDF}>
-          📄 Download PDF
-        </button>
-      </div>
-    </div>
+          <Box mb={2}>
+            {days.map(day => (
+              <Button
+                key={day}
+                variant={day === activeDay ? 'contained' : 'outlined'}
+                onClick={() => handleDayChange(day)}
+                sx={{ mr: 1, mb: 1 }}
+              >
+                {day}
+              </Button>
+            ))}
+          </Box>
+
+          {renderDayPlan()}
+
+          <Box sx={{ mt: 3, p: 2, backgroundColor: '#e3f2fd', borderRadius: 1 }}>
+            <Typography variant="body2">Description:</Typography>
+            <Typography variant="body2" sx={{ mb: 2 }}>
+              {meta?.summary || "This is a test description. The plan includes hotel stays, daily activities, meals, and flights. The estimated total cost for this 4-day journey is approximately ₹77,500."}
+            </Typography>
+          </Box>
+        </>
+      )}
+    </Box>
   );
-}
+};
 
 export default ItineraryDisplay;

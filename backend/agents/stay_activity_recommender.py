@@ -1,77 +1,78 @@
-# agents/stay_activity_recommender.py
-
-import sqlite3
-from typing import Dict, List, Any
+import os
 import logging
+import requests
 
 logger = logging.getLogger(__name__)
 
+TAVILY_KEY = os.getenv("TAVILY_KEY")
+TAVILY_URL = "https://api.tavily.com/search"
 
-def fetch_recommendations(
-    db_path: str,
-    destination: str,
-    trip_type: str,
-    food_preference: str,
-    num_members: int,
-    budget: str
-) -> Dict[str, List[Dict[str, Any]]]:
-    """
-    Fetch hotel, activity, meal, and transport recommendations from the SQLite DB.
-    """
-    conn = None
-    try:
-        conn = sqlite3.connect(db_path)
-        cursor = conn.cursor()
+def tavily_search(query: str, max_results: int = 5):
+    headers = {"Authorization": f"Bearer {TAVILY_KEY}"}
+    body = {
+        "query": query,
+        "max_results": max_results,
+        "include_images": False
+    }
+    resp = requests.post(TAVILY_URL, headers=headers, json=body)
+    resp.raise_for_status()
+    return resp.json().get("results", [])
 
-        # Fetch data with filters
-        cursor.execute(
-            "SELECT * FROM hotels WHERE destination = ? AND budget = ? LIMIT 5",
-            (destination, budget)
-        )
-        hotels = cursor.fetchall()
+def extract_item_fields(item):
+    """Extract name, price, rating, content from Tavily result safely."""
+    name = item.get("title") or item.get("name") or "Unnamed"
+    content = item.get("content", "")
 
-        cursor.execute(
-            "SELECT * FROM activities WHERE destination = ? AND type = ? LIMIT 6",
-            (destination, trip_type)
-        )
-        activities = cursor.fetchall()
+    # Simple price extraction pattern (₹ or INR followed by digits)
+    price_match = (
+        item.get("price") or
+        _extract_price(content) or
+        1000  # fallback
+    )
 
-        cursor.execute(
-            "SELECT * FROM meals WHERE destination = ? AND food_preference = ? LIMIT 6",
-            (destination, food_preference)
-        )
-        meals = cursor.fetchall()
+    # Simple rating extraction pattern (e.g., 3.5/5 or 4 stars)
+    rating_match = (
+        item.get("rating") or
+        _extract_rating(content) or
+        "4.0"
+    )
 
-        cursor.execute(
-            "SELECT * FROM transport WHERE destination = ? AND budget = ? LIMIT 3",
-            (destination, budget)
-        )
-        transport = cursor.fetchall()
+    return {
+        "name": name,
+        "price": price_match,
+        "rating": rating_match,
+        "content": content
+    }
 
-        if not hotels or not activities or not meals or not transport:
-            raise ValueError("Insufficient data in the database. Please scrape data first.")
+def _extract_price(text):
+    import re
+    match = re.search(r"(₹|INR)?\s?(\d{3,6})", text)
+    return int(match.group(2)) if match else None
 
-        recommendations = {
-            "hotels": [
-                {"name": h[1], "price": h[2], "rating": h[3], "num_reviews": h[4], "budget": h[5]} for h in hotels
-            ],
-            "activities": [
-                {"name": a[1], "description": a[2], "price": a[3], "type": a[4]} for a in activities
-            ],
-            "meals": [
-                {"name": m[1], "description": m[2], "price": m[3], "rating": m[4], "num_reviews": m[5], "food_preference": m[6]} for m in meals
-            ],
-            "transport": [
-                {"name": t[1], "description": t[2], "price": t[3], "budget": t[4]} for t in transport
-            ]
-        }
+def _extract_rating(text):
+    import re
+    match = re.search(r"(\d\.\d)\s?(?:/5|stars?)", text, re.IGNORECASE)
+    return match.group(1) if match else None
 
-        return recommendations
+def fetch_recommendations(destination, trip_type, food_preference, num_members, budget_per_person, hotel_stars):
+    logger.info(f"🌐 Searching Tavily for: {destination}, {trip_type}, food={food_preference}, budget=₹{budget_per_person}, stars={hotel_stars}")
 
-    except Exception as e:
-        logger.error(f"❌ Error fetching recommendations: {e}")
-        raise
+    hotels_q = f"{destination} {trip_type} hotels {' '.join(hotel_stars)} star"
+    acts_q = f"things to do in {destination} for {trip_type} travelers"
+    meals_q = f"top {food_preference} restaurants in {destination}"
+    trans_q = f"{destination} airport transfer options"
 
-    finally:
-        if conn:
-            conn.close()
+    # Tavily calls
+    raw_hotels = tavily_search(hotels_q)
+    raw_activities = tavily_search(acts_q)
+    raw_meals = tavily_search(meals_q)
+    raw_transport = tavily_search(trans_q)
+
+    logger.info("✅ Tavily recommendations fetched.")
+
+    return {
+        "hotels": [extract_item_fields(h) for h in raw_hotels],
+        "activities": [extract_item_fields(a) for a in raw_activities],
+        "meals": [extract_item_fields(m) for m in raw_meals],
+        "transport": [t.get("content", "") for t in raw_transport if t.get("content")]
+    }

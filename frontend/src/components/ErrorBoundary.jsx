@@ -1,6 +1,6 @@
-import React from 'react';
+import React, { Component } from 'react';
 
-class ErrorBoundary extends React.Component {
+class ErrorBoundary extends Component {
   state = { hasError: false, error: null };
 
   static getDerivedStateFromError(error) {
@@ -10,9 +10,10 @@ class ErrorBoundary extends React.Component {
   render() {
     if (this.state.hasError) {
       return (
-        <div>
+        <div className="error-boundary">
           <h2>Something went wrong.</h2>
-          <p>{this.state.error?.message || 'Unknown error'}</p>
+          <p>{this.state.error.message}</p>
+          <button onClick={() => this.setState({ hasError: false })}>Try Again</button>
         </div>
       );
     }

@@ -11,33 +11,42 @@ logger = logging.getLogger(__name__)
 
 def get_trip_vibe(data: Dict[str, str]) -> str:
     """
-    Generate a short vibe statement like 'Vibe: adventurous' based on trip type and destination.
-    
+    Generate a concise trip vibe statement like 'Vibe: adventurous' 
+    based on the trip type and destination provided.
+
     Args:
-        data: Dictionary with 'trip_type' and 'destination' keys.
-    
+        data (dict): Dictionary with 'trip_type' and 'destination' keys.
+
     Returns:
-        A string representing the trip vibe.
+        str: A formatted vibe string (e.g., 'Vibe: adventurous')
     """
-    trip_type = data.get('trip_type', 'generic').strip().lower()
-    destination = data.get('destination', 'unknown').strip().lower()
+    trip_type = data.get('trip_type', 'relaxing').strip().lower()
+    destination = data.get('destination', 'somewhere').strip().title()
 
     logger.info(f"Generating vibe for trip_type='{trip_type}', destination='{destination}'")
 
     prompt = f"""
 You are a travel expert who crafts concise vibe labels.
-Generate a short vibe statement in the format: Vibe: [vibe]
-The vibe should reflect a {trip_type} trip to {destination}.
-Keep it under 10 words.
-Example: Vibe: adventurous
+Create a short vibe sentence in the format: Vibe: [vibe_word]
+It should match the mood of a {trip_type} trip to {destination}.
+The vibe must be a single word like 'romantic', 'adventurous', 'relaxing', etc.
+Length: under 10 words.
+Example: Vibe: romantic
+Only return the sentence starting with 'Vibe:'.
 """
 
     try:
-        response = call_gemini(prompt=prompt, max_tokens=20, temperature=0.8).strip()
+        response = call_gemini(prompt=prompt, max_tokens=20, temperature=0.7).strip()
+
+        # Clean and format response
         if not response.lower().startswith("vibe:"):
             response = f"Vibe: {trip_type}"
+        else:
+            response = response.splitlines()[0].strip()
+
         logger.info(f"Generated vibe: {response}")
         return response
+
     except Exception as e:
-        logger.error(f"Failed to generate vibe: {str(e)}")
+        logger.error(f"Vibe generation failed: {e}")
         return f"Vibe: {trip_type}"

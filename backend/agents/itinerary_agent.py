@@ -1,487 +1,387 @@
-import os
 import re
-import requests
-import sqlite3
-import json
-from datetime import datetime, timedelta
-from typing import Dict, List, Optional
-import google.generativeai as genai
-from dotenv import load_dotenv
-import time
-from requests.exceptions import HTTPError
+import os
 import logging
 import traceback
+from datetime import datetime, timedelta
+from decimal import Decimal, InvalidOperation
+import google.generativeai as genai
+from dotenv import load_dotenv
+import random
+import math
 
 load_dotenv()
-
-RAPIDAPI_KEY = os.getenv("RAPIDAPI_KEY")
-GOOGLE_PLACES_KEY = os.getenv("GOOGLE_PLACES_API_KEY")
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
-
-genai.configure(api_key=GEMINI_API_KEY)
-
-# Configure logging
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
-def get_location_id(destination):
-    """Get location ID for TripAdvisor using a search API."""
-    destination = destination.lower()
-    url = "https://tripadvisor16.p.rapidapi.com/api/v1/hotels/searchLocation"
-    querystring = {"query": destination}
-    headers = {
-        "X-RapidAPI-Key": RAPIDAPI_KEY,
-        "X-RapidAPI-Host": "tripadvisor16.p.rapidapi.com"
-    }
-    response = requests.get(url, headers=headers, params=querystring, timeout=5)
-    response.raise_for_status()
-    data = response.json()
-    if not data.get("data") or len(data["data"]) == 0:
-        raise Exception(f"No location data found for {destination} on TripAdvisor")
-    return data["data"][0]["locationId"]
-
 class ItineraryAgent:
-    def __init__(self, db_path="travel_data.db"):
-        self.db_path = db_path
-        try:
-            self.create_cache_table()
-        except Exception as e:
-            logger.error(f"Failed to create cache table: {str(e)}\n{traceback.format_exc()}")
-            raise
-
-    def create_cache_table(self):
-        """Create a table to cache API responses."""
-        conn = sqlite3.connect(self.db_path)
-        c = conn.cursor()
-        c.execute('''CREATE TABLE IF NOT EXISTS api_cache (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            destination TEXT,
-            data_type TEXT,
-            data TEXT,
-            last_updated TEXT
-        )''')
-        conn.commit()
-        conn.close()
-
-    def get_cached_data(self, destination: str, data_type: str) -> Optional[List]:
-        """Retrieve cached data if it's still valid (less than 24 hours old)."""
-        try:
-            conn = sqlite3.connect(self.db_path)
-            c = conn.cursor()
-            c.execute("SELECT data, last_updated FROM api_cache WHERE destination = ? AND data_type = ?",
-                      (destination.lower(), data_type))
-            result = c.fetchone()
-            conn.close()
-
-            if result:
-                data, last_updated = result
-                last_updated_date = datetime.fromisoformat(last_updated)
-                if (datetime.now() - last_updated_date).total_seconds() < 24 * 60 * 60:  # 24 hours
-                    return json.loads(data)
-            return None
-        except Exception as e:
-            logger.error(f"Error retrieving cached data for {destination}/{data_type}: {str(e)}\n{traceback.format_exc()}")
-            return None
-
-    def cache_data(self, destination: str, data_type: str, data: List):
-        """Cache the API response data."""
-        try:
-            conn = sqlite3.connect(self.db_path)
-            c = conn.cursor()
-            timestamp = datetime.now().isoformat()
-            c.execute("INSERT OR REPLACE INTO api_cache (destination, data_type, data, last_updated) VALUES (?, ?, ?, ?)",
-                      (destination.lower(), data_type, json.dumps(data), timestamp))
-            conn.commit()
-            conn.close()
-        except Exception as e:
-            logger.error(f"Error caching data for {destination}/{data_type}: {str(e)}\n{traceback.format_exc()}")
-
-    def get_hotels(self, destination, start_date, budget, retries=3, backoff_factor=5):
-        cached_hotels = self.get_cached_data(destination, "hotels")
-        if cached_hotels:
-            logger.info(f"Using cached hotel data for {destination}")
-            return cached_hotels
-
-        url = "https://booking-com15.p.rapidapi.com/api/v1/hotels/searchDestination"
-        headers = {"X-RapidAPI-Key": RAPIDAPI_KEY}
-        querystring = {"query": destination}
-
-        for attempt in range(retries):
-            try:
-                resp = requests.get(url, headers=headers, params=querystring, timeout=5)
-                remaining = resp.headers.get("X-RateLimit-Remaining")
-                if remaining and int(remaining) < 5:
-                    logger.warning(f"Only {remaining} requests remaining before hitting Booking.com rate limit.")
-                resp.raise_for_status()
-                break
-            except HTTPError as e:
-                if resp.status_code == 429:
-                    if attempt == retries - 1:
-                        raise
-                    wait_time = backoff_factor * (2 ** attempt)
-                    logger.warning(f"Rate limit hit for searchDestination. Retrying in {wait_time} seconds...")
-                    time.sleep(wait_time)
-                else:
-                    raise
-
-        dest_id = resp.json()["data"][0]["dest_id"]
-        price_range = {"low": (0, 50), "medium": (50, 150), "high": (150, 500)}.get(budget, (50, 150))
-        hotel_url = "https://booking-com15.p.rapidapi.com/api/v1/hotels/searchHotels"
-        querystring = {
-            "dest_id": dest_id,
-            "search_type": "CITY",
-            "price_min": price_range[0] * 83,
-            "price_max": price_range[1] * 83,
-            "checkin_date": start_date,
-            "checkout_date": (datetime.strptime(start_date, "%Y-%m-%d") + timedelta(days=1)).strftime("%Y-%m-%d"),
-            "adults": 1,
-            "rooms": 1,
-            "currency_code": "INR"
+    BUDGET_TIERS = {
+        "budget-friendly": {
+            "flight": Decimal("10000"),
+            "hotel_per_night": Decimal("8000"),
+            "daily_activity": Decimal("2000"),
+            "meal": Decimal("1500"),
+        },
+        "mid-range": {
+            "flight": Decimal("15000"),
+            "hotel_per_night": Decimal("12000"),
+            "daily_activity": Decimal("3000"),
+            "meal": Decimal("2000"),
+        },
+        "premium": {
+            "flight": Decimal("25000"),
+            "hotel_per_night": Decimal("25000"),
+            "daily_activity": Decimal("8000"),
+            "meal": Decimal("5000"),
         }
+    }
 
-        for attempt in range(retries):
-            try:
-                hotel_resp = requests.get(hotel_url, headers=headers, params=querystring, timeout=5)
-                remaining = hotel_resp.headers.get("X-RateLimit-Remaining")
-                if remaining and int(remaining) < 5:
-                    logger.warning(f"Only {remaining} requests remaining before hitting Booking.com rate limit.")
-                hotel_resp.raise_for_status()
-                break
-            except HTTPError as e:
-                if hotel_resp.status_code == 429:
-                    if attempt == retries - 1:
-                        raise
-                    wait_time = backoff_factor * (2 ** attempt)
-                    logger.warning(f"Rate limit hit for searchHotels. Retrying in {wait_time} seconds...")
-                    time.sleep(wait_time)
-                else:
-                    raise
+    def generate_with_gemini(self, destination: str, start_date: str, duration: int, trip_type: str,
+                             food_preference: str, num_members: int, budget_preference: str,
+                             flight_included=False, hotel_stars=['5'], from_location: str = "Hyderabad, India",
+                             retry: bool = True, include_last_day_activities=False) -> dict:
+        logger.info(f"Starting generation with: destination={destination}, start_date={start_date}, duration={duration}, trip_type={trip_type}, "
+                    f"food_preference={food_preference}, num_members={num_members}, budget_preference={budget_preference}, "
+                    f"flight_included={flight_included}, hotel_stars={hotel_stars}, from_location={from_location}, "
+                    f"include_last_day_activities={include_last_day_activities}")
 
-        hotels = hotel_resp.json().get("data", {}).get("hotels", [])
-        hotels_data = [{"name": h["property"]["name"], "price": h["property"]["priceBreakdown"]["grossPrice"]["value"]} for h in hotels[:3]]
-        self.cache_data(destination, "hotels", hotels_data)
-        return hotels_data
+        genai.configure(api_key=os.getenv("GOOGLE_API_KEY"))
+        model = genai.GenerativeModel("gemini-2.0-flash")
 
-    def get_meals(self, destination, retries=3, backoff_factor=5):
-        cached_meals = self.get_cached_data(destination, "meals")
-        if cached_meals:
-            logger.info(f"Using cached meal data for {destination}")
-            return cached_meals
+        if budget_preference not in self.BUDGET_TIERS:
+            logger.warning(f"Invalid budget preference '{budget_preference}'. Defaulting to 'mid-range'.")
+            budget_preference = "mid-range"
+        tier = self.BUDGET_TIERS[budget_preference]
 
-        location_id = get_location_id(destination)
-        headers = {"X-RapidAPI-Key": RAPIDAPI_KEY}
-        url = "https://tripadvisor16.p.rapidapi.com/api/v1/restaurant/searchRestaurants"
-        querystring = {"locationId": location_id}
+        logger.info(f"Base daily budget guidance for {budget_preference}: {tier}")
 
-        for attempt in range(retries):
-            try:
-                resp = requests.get(url, headers=headers, params=querystring, timeout=5)
-                remaining = resp.headers.get("X-RateLimit-Remaining")
-                if remaining and int(remaining) < 5:
-                    logger.warning(f"Only {remaining} requests remaining before hitting TripAdvisor rate limit.")
-                resp.raise_for_status()
-                break
-            except HTTPError as e:
-                if resp.status_code == 429:
-                    if attempt == retries - 1:
-                        raise
-                    wait_time = backoff_factor * (2 ** attempt)
-                    logger.warning(f"Rate limit hit for searchRestaurants. Retrying in {wait_time} seconds...")
-                    time.sleep(wait_time)
-                else:
-                    raise
+        flight_prompt = "Include flights and transfers" if flight_included else "Do not include flights or airport transfers. Explicitly exclude any mention of flights or airport-related transfers in the itinerary."
+        luxury_instruction = "Enhance with 5-star hotels, private transfers, spa experiences, and exclusive activities." if budget_preference == "premium" else ""
+        mid_range_instruction = "Use 4-star hotels and moderate activities." if budget_preference == "mid-range" else ""
+        budget_friendly_instruction = f"Use {', '.join(hotel_stars)}-star hotels and economical activities." if budget_preference == "budget-friendly" else ""
 
-        meals = resp.json().get("data", {}).get("data", [])
-        meals_data = [{"name": m.get("name", "Local Restaurant"), "cuisine": m.get("cuisine", "Local Cuisine")} for m in meals[:3]]
-        self.cache_data(destination, "meals", meals_data)
-        return meals_data
-
-    def get_activities(self, destination, retries=3, backoff_factor=5):
-        cached_activities = self.get_cached_data(destination, "activities")
-        if cached_activities:
-            logger.info(f"Using cached activity data for {destination}")
-            return cached_activities
-
-        url = "https://maps.googleapis.com/maps/api/place/textsearch/json"
-        querystring = {"query": f"things to do in {destination}", "key": GOOGLE_PLACES_KEY}
-
-        for attempt in range(retries):
-            try:
-                resp = requests.get(url, params=querystring, timeout=5)
-                resp.raise_for_status()
-                break
-            except HTTPError as e:
-                if resp.status_code == 429:
-                    if attempt == retries - 1:
-                        raise
-                    wait_time = backoff_factor * (2 ** attempt)
-                    logger.warning(f"Rate limit hit for Google Places API. Retrying in {wait_time} seconds...")
-                    time.sleep(wait_time)
-                else:
-                    raise
-
-        activities = resp.json().get("results", [])[:5]
-        activities_data = [{"name": a.get("name", "Activity")} for a in activities]
-        self.cache_data(destination, "activities", activities_data)
-        return activities_data
-
-    def parse_itinerary_to_dict(self, itinerary_text: str) -> Dict:
-        """Parse the itinerary string into a structured dictionary, handling various formats."""
-        itinerary_dict = {}
-        current_day = None
-        current_section = None
-        lines = itinerary_text.split("\n")
-        
-        for line in lines:
-            line = line.strip()
-            if not line:
-                continue
-
-            # Handle day headings
-            # Gemini format: "**Day X – YYYY-MM-DD: Description**"
-            gemini_day_match = re.match(r"\*\*Day (\d+) – (\d{4}-\d{2}-\d{2}): (.+?)\*\*", line)
-            # Simpler format: "Day X – YYYY-MM-DD" or "Day X – YYYY-MM-DD: Description"
-            simple_day_match = re.match(r"Day (\d+) – (\d{4}-\d{2}-\d{2})(?:: (.+))?", line)
-            
-            if gemini_day_match:
-                day_num, date, _ = gemini_day_match.groups()
-                current_day = f"Day {day_num} – {date}"
-                itinerary_dict[current_day] = {
-                    "Transportation": [],
-                    "Accommodation": [],
-                    "Planned Activities": [],
-                    "Meals": [],
-                    "Total Cost": None
-                }
-                current_section = None
-                continue
-            elif simple_day_match:
-                day_num, date, _ = simple_day_match.groups()
-                current_day = f"Day {day_num} – {date}"
-                itinerary_dict[current_day] = {
-                    "Transportation": [],
-                    "Accommodation": [],
-                    "Planned Activities": [],
-                    "Meals": [],
-                    "Total Cost": None
-                }
-                current_section = None
-                continue
-
-            if not current_day:
-                continue
-
-            # Handle section headers
-            # Gemini format: "**Transportation:**" or "* **Transportation:**"
-            # Simpler format: "Transportation:"
-            if re.match(r"(\* )?\*\*Transportation:\*\*", line) or line.startswith("Transportation:"):
-                current_section = "Transportation"
-                line = re.sub(r"(\* )?\*\*Transportation:\*\*", "Transportation:", line).replace("Transportation:", "").strip()
-                if line:
-                    itinerary_dict[current_day][current_section].append(f"Transportation: {line}")
-            elif re.match(r"(\* )?\*\*Accommodation:\*\*", line) or line.startswith("Accommodation:"):
-                current_section = "Accommodation"
-                line = re.sub(r"(\* )?\*\*Accommodation:\*\*", "Accommodation:", line).replace("Accommodation:", "").strip()
-                if line:
-                    itinerary_dict[current_day][current_section].append(f"Accommodation: {line}")
-            elif re.match(r"(\* )?\*\*Planned Activities:\*\*", line) or line.startswith("Planned Activities:"):
-                current_section = "Planned Activities"
-            elif re.match(r"(\* )?\*\*Meals for the Day:\*\*", line) or line.startswith("Meals for the Day:"):
-                current_section = "Meals"
-            elif re.match(r"(\* )?\*\*Total Estimated Cost for the Day:\*\*", line) or line.startswith("Total Estimated Cost for the Day:"):
-                current_section = None
-                cost = re.sub(r"(\* )?\*\*Total Estimated Cost for the Day:\*\*", "", line).replace("Total Estimated Cost for the Day:", "").strip()
-                itinerary_dict[current_day]["Total Cost"] = f"Total Estimated Cost for the Day: {cost}"
-            # Handle items under sections
-            elif current_section:
-                # Gemini format: "* **Morning (9:00 AM):** ..." or "* Morning: ..."
-                # Simpler format: "**Morning (9:00 AM):** ..." or "Breakfast: ..."
-                if re.match(r"\* \*\*(Morning|Afternoon|Evening)\b", line) or re.match(r"\* (Breakfast|Lunch|Dinner)\b", line):
-                    cleaned_line = re.sub(r"^\* \*\*|\*\*$", "", line).strip()
-                    itinerary_dict[current_day][current_section].append(cleaned_line)
-                elif line.startswith("* ") or line.startswith("    * "):
-                    cleaned_line = re.sub(r"^\*+\s*|\s*\*+$", "", line).strip()
-                    if cleaned_line:
-                        itinerary_dict[current_day][current_section].append(cleaned_line)
-                elif re.match(r"\*\*(Morning|Afternoon|Evening)\b", line) or line.startswith("Breakfast:") or line.startswith("Lunch:") or line.startswith("Dinner:"):
-                    cleaned_line = re.sub(r"^\*\*|\*\*$", "", line).strip()
-                    itinerary_dict[current_day][current_section].append(cleaned_line)
-        
-        return itinerary_dict
-
-    def generate_itinerary(self, destination, start_date, duration, trip_type, food_preference, num_members, budget):
-        try:
-            logger.info(f"Generating itinerary for destination: {destination}, trip_type: {trip_type}")
-            # Try to get cached data first
-            hotel_data = self.get_hotels(destination, start_date, budget)
-            meals_data = self.get_meals(destination)
-            activities = self.get_activities(destination)
-
-            itinerary_text = "Your Trip Itinerary\n"
-            itinerary_text += f"Vibe: A memorable {trip_type.lower()} trip in {destination}\n\n"
-
-            total_budget = 0
-            for i in range(duration):
-                day_date = (datetime.strptime(start_date, '%Y-%m-%d') + timedelta(days=i)).strftime('%B %d, %Y')
-                hotel = hotel_data[i % len(hotel_data)]
-                meal = meals_data[i % len(meals_data)]
-                activity_list = activities[i % len(activities):i % len(activities) + 3]
-
-                daily_cost = hotel["price"] + 1500 + 2500 + 5000  # Meal costs
-                total_budget += daily_cost
-
-                itinerary_text += f"Day {i + 1} – {day_date}\n"
-                itinerary_text += f"Transportation: Local transport in {destination}\n"
-                itinerary_text += f"Accommodation: {hotel['name']} (Luxury 5-star), ₹{hotel['price']}\n"
-                itinerary_text += f"Planned Activities:\n"
-                for activity in activity_list:
-                    itinerary_text += f"- {activity['name']}\n"
-                itinerary_text += f"Meals for the Day:\n"
-                itinerary_text += f"- Breakfast at {meal['name']}: {meal['cuisine']}, ₹1500\n"
-                itinerary_text += f"- Lunch at Local Eatery: {food_preference} options, ₹2500\n"
-                itinerary_text += f"- Dinner at Local Restaurant: {food_preference} options, ₹5000\n"
-                itinerary_text += f"Total Estimated Cost for the Day: ₹{daily_cost}\n\n"
-
-            itinerary_dict = self.parse_itinerary_to_dict(itinerary_text)
-            logger.info(f"Generated itinerary: {itinerary_dict}")
-            return {
-                "itinerary": itinerary_dict,
-                "vibe": f"A memorable {trip_type.lower()} trip in {destination}",
-                "total_budget": total_budget
-            }
-
-        except Exception as api_error:
-            logger.warning(f"Falling back to Gemini due to API failure: {str(api_error)}\n{traceback.format_exc()}")
-            return self.generate_with_gemini(destination, start_date, duration, trip_type, food_preference, num_members, budget)
-
-    def generate_with_gemini(
-        self,
-        destination: str,
-        start_date: str,
-        duration: int,
-        trip_type: str,
-        food_preference: str,
-        num_members: int,
-        budget: str,
-        retry: bool = True
-    ) -> Dict:
-        logger.info(f"Generating itinerary with Gemini for destination: {destination}, trip_type: {trip_type}")
-        model = genai.GenerativeModel("gemini-1.5-flash")
-
-        # Add an example for Maldives with relaxation trip type to guide Gemini
-        example_section = ""
-        if destination.lower() == "maldives" and trip_type.lower() == "relaxation":
-            example_section = """
-**Example for Maldives (Relaxation Trip):**
-Your Trip Itinerary  
-Vibe: A relaxation trip in Maldives  
-
-Day 1 – 23 June 2025: Arrival and Beach Relaxation  
-Transportation: Arrival at Velana International Airport (MLE). Ferry to Hulhumalé (approx. 15 minutes).  
-Accommodation: Hulhumalé Hotel (Budget-friendly guesthouse, clean rooms). Price: ₹3000 per night.  
-Planned Activities:  
-Morning – Airport Transfer & Check-in: Transfer to Hulhumalé by ferry. Check in to the hotel. Cost: ₹200 (ferry)  
-Afternoon – Hulhumalé Beach Relaxation: Relax on the pristine beach, enjoy the turquoise waters. Cost: ₹0  
-Evening – Sunset Stroll: Walk along the beach and enjoy the sunset. Cost: ₹0  
-Meals for the Day:  
-Breakfast – Hotel: Basic breakfast provided. Cost: Included  
-Lunch – Local Eatery near beach: Vegetarian snacks and fresh juices. Cost: ₹300  
-Dinner – Local Restaurant: Vegetarian curry and rice. Cost: ₹500  
-Total Estimated Cost for the Day: ₹3500
-"""
+        # Enforce food preference in meals
+        food_instruction = f"All meals (breakfast, lunch, dinner) must be {food_preference} options only, with appropriate dishes reflecting this preference (e.g., non-veg includes meat/fish, veg excludes them)."
 
         prompt = f"""
-You are a professional travel assistant. Generate a rich, engaging, clearly structured itinerary for **{destination}**. The itinerary must explicitly focus on {destination} and match the specified trip type and preferences.
+You are a highly skilled travel planner crafting a detailed {duration}-night itinerary for **{destination}**, tailored for a **{trip_type.lower()}** trip, with rich, narrative-style descriptions.
 
----
-Your Trip Itinerary  
-Vibe: A {trip_type.lower()} trip in {destination}
+✈️ {flight_prompt}. If flights are included, include a flight from {from_location} to {destination} on Day 1 and a return flight on Day {duration + 1}. Use correct airport codes and realistic durations. Include an estimated flight cost range prefixed with '~₹' (e.g., ~₹2500 - ~₹4500 per person) in the Flights & Transfers section for Day 1 and Day {duration + 1}, but do not include it in the daily budget. Include appropriate transfers with costs prefixed with '~₹' listed separately in the 'Flights & Transfers' section for each day. If flights are not included, ensure no flight or airport transfer details are mentioned.
 
-Day 1 – <Formatted Date>: Arrival and Initial Exploration  
-Transportation: <Arrival/movement info specific to {destination}>  
-Accommodation: <Hotel name, type, quality, price>  
-Planned Activities:  
-Morning – <Activity>: <desc specific to {destination}>. Cost: ₹____  
-Afternoon – <Activity>: <desc specific to {destination}>. Cost: ₹____  
-Evening – <Activity>: <desc specific to {destination}>. Cost: ₹____  
-Meals for the Day:  
-Breakfast – <Where>: <desc>. Cost: ₹____  
-Lunch – <Where>: <desc>. Cost: ₹____  
-Dinner – <Where>: <desc>. Cost: ₹____  
-Total Estimated Cost for the Day: ₹____
----
+💰 IMPORTANT:
+- Prefix all costs (activities, meals, hotel, transfers, flights) with '~₹' to indicate estimates.
+- The 'Total Estimated Cost for the Day' should include only the costs of activities and meals (prefixed with '~₹'), excluding transfer costs.
+- Ensure every meal (breakfast, lunch, dinner) includes a cost in the format 'Cost: ~₹<amount> per person', even with narrative descriptions, and strictly adheres to the {food_preference} preference. On Day {duration + 1} if include_last_day_activities is true and flights are not included, include non-zero costs for activities and meals; if flights are included, exclude activities and meals on Day {duration + 1}.
+- Include four activities per day (morning, afternoon, evening, night) for Days 1 to {duration}, each with a 2–3 sentence narrative and "Cost: ~₹<amount> per person" based on the budget tier.
+- Include three meals per day (breakfast, lunch, dinner) for Days 1 to {duration} with similar narratives and costs.
+- Day {duration + 1} should include departure details (flight and transfer) if flights are included, with no activities or meals. If flights are not included and include_last_day_activities is true, include four activities and three meals with non-zero costs based on the budget tier; otherwise, exclude activities, meals, and hotel costs on Day {duration + 1}.
+- DO NOT write “Total Estimated Cost for the Day” manually; it will be calculated automatically.
+- In the Hotel section, list 2-3 hotel options with their names, star ratings (strictly matching the provided hotel_stars preference), brief descriptions (1-2 sentences), and costs per night prefixed with '~₹'.
 
-{example_section}
-
-**Instructions:**
-- This itinerary MUST be for "{destination}" only. Do not mention any other destinations (e.g., do not mention Goa unless destination is Goa).
-- Ensure all activities, accommodations, and meals are specific to {destination}.
-- Match the trip type: {trip_type.lower()}.
-- Consider food preference: {food_preference.lower()}.
-- Strictly adhere to the budget: {budget.lower()}. For 'low' budget, keep daily costs under ₹10,000 per person; for 'high' budget, costs can be higher but should be reasonable for a luxury experience.
-- Generate the itinerary for exactly {num_members} traveler(s). Do not assume a different number of travelers.
-- Generate for {duration} days starting from {start_date}.
-- Include realistic costs in INR (₹).
-- If you cannot generate a valid itinerary for {destination}, return a message indicating the failure.
-
-Destination: {destination}  
-Trip Type: {trip_type}  
-Food Preference: {food_preference}  
-Duration: {duration} days  
-Start Date: {start_date}  
-Budget: {budget}  
+Hotel preference: {', '.join(hotel_stars)} stars.
 Travelers: {num_members}
+From: {from_location} to {destination}
+Start date: {start_date}, Duration: {duration + 1 if flight_included else duration} days
+Food preference: {food_preference}
+
+Structure each day like this:
+---
+Day X – YYYY-MM-DD (Day):
+Day Plan: [A short, engaging overview]
+
+Flights & Transfers:
+- [Narrative description of flight or transfer, including cost range if applicable]
+
+Hotel:
+- [Hotel 1 Name] ([star]-star): [Brief description]. Cost: ~₹[amount] per night.
+- [Hotel 2 Name] ([star]-star): [Brief description]. Cost: ~₹[amount] per night.
+- [Hotel 3 Name] ([star]-star): [Brief description]. Cost: ~₹[amount] per night. (optional, include only if available)
+
+Activity:
+- Morning: [2–3 sentence narrative] Cost: ~₹[amount] per person (exclude on Day {duration + 1} unless flights are not included and include_last_day_activities is true, then use non-zero cost)
+- Afternoon: [2–3 sentence narrative] Cost: ~₹[amount] per person (exclude on Day {duration + 1} unless flights are not included and include_last_day_activities is true, then use non-zero cost)
+- Evening: [2–3 sentence narrative] Cost: ~₹[amount] per person (exclude on Day {duration + 1} unless flights are not included and include_last_day_activities is true, then use non-zero cost)
+- Night: [2–3 sentence narrative] Cost: ~₹[amount] per person (exclude on Day {duration + 1} unless flights are not included and include_last_day_activities is true, then use non-zero cost)
+
+Meals:
+- Breakfast: [2–3 sentence narrative] Cost: ~₹[amount] per person (exclude on Day {duration + 1} unless flights are not included and include_last_day_activities is true, then use non-zero cost)
+- Lunch: [2–3 sentence narrative] Cost: ~₹[amount] per person (exclude on Day {duration + 1} unless flights are not included and include_last_day_activities is true, then use non-zero cost)
+- Dinner: [2–3 sentence narrative] Cost: ~₹[amount] per person (exclude on Day {duration + 1} unless flights are not included and include_last_day_activities is true, then use non-zero cost)
+
+Total Estimated Cost for the Day: ~₹[amount] per person (excludes flights, transfers, and hotels) (exclude on Day {duration + 1}, includes only activities and meals)
+---
 """
 
         try:
+            start_date_obj = datetime.strptime(start_date, "%Y-%m-%d")
+            dates = [(start_date_obj + timedelta(days=i)).strftime("%Y-%m-%d") for i in range(duration + (1 if flight_included else 0))]
             response = model.generate_content(prompt)
             raw_text = response.text.strip()
-            logger.info(f"Gemini response: {raw_text}")
+            logger.info(f"Full Gemini response: {raw_text}")
 
-            # Check if Gemini hallucinated the wrong destination
-            if destination.lower() not in raw_text.lower():
+            days_found = re.findall(r"Day\s+\d+\s*–\s*(\d{4}-\d{2}-\d{2})", raw_text)
+            if not raw_text or len(days_found) < duration + (1 if flight_included else 0):
                 if retry:
-                    logger.warning("Gemini hallucinated wrong destination. Retrying with strict prompt...")
-                    return self.generate_with_gemini(destination, start_date, duration, trip_type, food_preference, num_members, budget, retry=False)
+                    logger.warning("Gemini returned invalid or incomplete response. Retrying...")
+                    return self.generate_with_gemini(destination, start_date, duration, trip_type, food_preference,
+                                                    num_members, budget_preference, flight_included,
+                                                    hotel_stars, from_location, retry=False, include_last_day_activities=include_last_day_activities)
+                return self._fallback_itinerary(destination, start_date, duration, trip_type, num_members, budget_preference, num_members, hotel_stars)
 
-                logger.error("Gemini failed to produce destination-specific content.")
-                return {
-                    "itinerary": {f"Day 1 – {start_date}": {"Error": [f"Sorry, we couldn't generate a valid itinerary for {destination}."]}},
-                    "vibe": f"{trip_type.title()} trip in {destination}",
-                    "total_budget": None
+            days = re.findall(r"Day\s+(\d+)\s*–\s*(\d{4}-\d{2}-\d{2})\s*\(.*\)", raw_text)
+            itinerary_dict = {}
+            total_cost = Decimal('0')  # Activities and meals only
+            total_transfer_cost = Decimal('0')  # Separate transfer costs
+            flight_cost = Decimal('0')
+            hotel_cost = Decimal('0')
+
+            all_hotels = []
+            all_flights = []
+            all_transfers = []
+            all_activities = []
+            all_meals = []
+
+            for day_num, day_date in days[:duration + (1 if flight_included else 0)]:
+                transfer_cost = Decimal('0')
+                activity_costs = []
+                meal_costs = []
+                day_num = int(day_num)
+
+                block = re.search(
+                    rf"Day\s+{day_num}\s*–\s*{day_date}\s*\(.*\)[\s\S]*?(?=(?:Day\s+\d+\s*–\s*\d{{4}}-\d{{2}}-\d{{2}}\s*\(|$))",
+                    raw_text, re.DOTALL
+                )
+                if not block:
+                    continue
+
+                block_text = block.group(0)
+
+                day_plan_text = self._extract_section(
+                    block_text,
+                    r"Day Plan:\s*(.*?)(?=\n(?:Flights & Transfers|Hotel|Activity|Meals|\Z))"
+                )
+
+                flights_and_transfers = self._extract_lines(
+                    block_text, r"Flights & Transfers:\s*((?:.|\n)*?)(?=\n(?:Hotel|Activity|Meals|\Z))"
+                )
+
+                # Filter out flight-related lines if flight_included is False
+                if not flight_included:
+                    flights_and_transfers = [line for line in flights_and_transfers if "Flight" not in line and "Airport" not in line]
+
+                hotels = [h for h in self._extract_lines(
+                    block_text,
+                    r"Hotel:\s*((?:.|\n)*?)(?=\n(?:Activity|Meals|\Z))",
+                    strip_stars=True
+                ) if "Cost:" in h and (day_num <= duration or (day_num == duration + 1 and not flight_included)) and any(f"{star}-star" in h for star in hotel_stars)]
+
+                activities = self._extract_lines(
+                    block_text, r"Activity:\s*((?:.|\n)*?)(?=\n(?:Meals|Total|\Z))", strip_stars=True
+                )
+
+                meals = self._extract_lines(
+                    block_text, r"Meals:\s*((?:.|\n)*?)(?=\n(?:Total|\Z))", strip_stars=True
+                )
+
+                cost_pattern = re.compile(r"Cost[:\s]*~₹([\d,]+)(?:\s*per\s*person)?", re.IGNORECASE)
+
+                for item in flights_and_transfers:
+                    if 'Transfer' in item and not flight_included:  # Only process transfers, skip flights
+                        match = cost_pattern.search(item)
+                        if match:
+                            cost = Decimal(match.group(1).replace(",", ""))
+                            transfer_cost += cost
+                            total_transfer_cost += cost
+                    elif 'Flight' in item and flight_included and day_num in [1, duration + 1]:
+                        match = re.search(r"Estimated Flight Cost: ~₹(\d+)-~₹(\d+)", item)
+                        if match:
+                            flight_cost += Decimal((int(match.group(1)) + int(match.group(2))) / 2) * num_members
+                        else:
+                            logger.warning(f"No flight cost parsed for day {day_num}: {item}")
+                            flight_cost += tier["flight"] * num_members  # Fallback to tier if not parsed
+
+                activity_slots = {'Morning': None, 'Afternoon': None, 'Evening': None, 'Night': None}
+                for act in activities:
+                    for slot in activity_slots.keys():
+                        if slot.lower() in act.lower() and activity_slots[slot] is None and (day_num <= duration or (day_num == duration + 1 and not flight_included and include_last_day_activities)):
+                            activity_slots[slot] = act
+                            break
+
+                filtered_activities = [act if act else f"{slot}: A relaxing activity is planned. Cost: ~₹{tier['daily_activity'] / 4} per person" for slot, act in activity_slots.items() if (day_num <= duration or (day_num == duration + 1 and not flight_included and include_last_day_activities))]
+                # Ensure non-zero costs on last day if include_last_day_activities is true and no flights
+                if day_num == duration + 1 and not flight_included and include_last_day_activities:
+                    for i in range(len(filtered_activities)):
+                        if "Cost: ~₹0" in filtered_activities[i]:
+                            filtered_activities[i] = filtered_activities[i].replace("Cost: ~₹0", f"Cost: ~₹{tier['daily_activity'] / 4}")
+
+                for i in range(len(filtered_activities)):
+                    if len(filtered_activities[i].split("Cost:")[0].strip().split()) < 10 and (day_num <= duration or (day_num == duration + 1 and not flight_included and include_last_day_activities)):
+                        refine_prompt = f"Rewrite this activity as a 2-3 sentence narrative with vivid descriptions: {filtered_activities[i]}"
+                        refine_response = model.generate_content(refine_prompt)
+                        refined_text = refine_response.text.strip()
+                        if "Cost:" not in refined_text and (day_num <= duration or (day_num == duration + 1 and not flight_included and include_last_day_activities)):
+                            refined_text += f" Cost: ~₹{tier['daily_activity'] / 4}"
+                        filtered_activities[i] = refined_text
+
+                meal_slots = {'Breakfast': None, 'Lunch': None, 'Dinner': None}
+                for meal in meals:
+                    for slot in meal_slots.keys():
+                        if slot.lower() in meal.lower() and meal_slots[slot] is None and (day_num <= duration or (day_num == duration + 1 and not flight_included and include_last_day_activities)):
+                            meal_slots[slot] = meal
+                            break
+
+                filtered_meals = [meal if meal else f"{slot}: A light meal is planned. Cost: ~₹{tier['meal'] / 3} per person" for slot, meal in meal_slots.items() if (day_num <= duration or (day_num == duration + 1 and not flight_included and include_last_day_activities))]
+                for i in range(len(filtered_meals)):
+                    if len(filtered_meals[i].split("Cost:")[0].strip().split()) < 10 and (day_num <= duration or (day_num == duration + 1 and not flight_included and include_last_day_activities)):
+                        refine_prompt = f"Rewrite this meal as a 2-3 sentence narrative with vivid descriptions: {filtered_meals[i]}"
+                        refine_response = model.generate_content(refine_prompt)
+                        refined_text = refine_response.text.strip() + f" Cost: ~₹{tier['meal'] / 3}" if "Cost:" not in refine_response.text.strip() and (day_num <= duration or (day_num == duration + 1 and not flight_included and include_last_day_activities)) else refine_response.text.strip()
+                        filtered_meals[i] = refined_text
+
+                for act in filtered_activities:
+                    match = cost_pattern.search(act)
+                    if match:
+                        activity_costs.append(Decimal(match.group(1).replace(",", "")))
+                    elif day_num == duration + 1 and not flight_included and include_last_day_activities:
+                        activity_costs.append(tier["daily_activity"] / 4)  # Fallback cost
+
+                for meal in filtered_meals:
+                    match = cost_pattern.search(meal)
+                    if match:
+                        meal_costs.append(Decimal(match.group(1).replace(",", "")))
+                    elif day_num == duration + 1 and not flight_included and include_last_day_activities:
+                        meal_costs.append(tier["meal"] / 3)  # Fallback cost
+
+                total_day_cost = sum(activity_costs) + sum(meal_costs)
+
+                itinerary_dict[f"Day {day_num} – {day_date}"] = {
+                    "Day Plan": [day_plan_text.strip()] if day_plan_text else [],
+                    "Flights & Transfers": flights_and_transfers,
+                    "Hotel": hotels,
+                    "Activity": filtered_activities if (day_num <= duration or (day_num == duration + 1 and not flight_included and include_last_day_activities)) else [],
+                    "Meals": filtered_meals if (day_num <= duration or (day_num == duration + 1 and not flight_included and include_last_day_activities)) else [],
+                    "Total Cost": [f"Total Estimated Cost for the Day: ~₹{total_day_cost} per person (excludes flights, transfers, and hotels)"] if (day_num <= duration or (day_num == duration + 1 and not flight_included and include_last_day_activities)) else []
                 }
 
-            # Extract the total trip cost from the "Total Estimated Cost for the Trip" line, if present
-            total_trip_cost_match = re.search(r"Total Estimated Cost for the Trip.*₹\s*([\d,]+)\s*(?:-\s*₹([\d,]+))?", raw_text)
-            if total_trip_cost_match:
-                min_cost = int(total_trip_cost_match.group(1).replace(",", ""))
-                max_cost = int(total_trip_cost_match.group(2).replace(",", "")) if total_trip_cost_match.group(2) else min_cost
-                total_cost = (min_cost + max_cost) / 2  # Use the average of the range
-            else:
-                # Fallback: Sum the daily totals
-                daily_cost_matches = re.findall(r"Total Estimated Cost for the Day: ₹\s*([\d,]+)\s*(?:-\s*₹([\d,]+))?", raw_text)
-                total_cost = 0
-                for min_cost, max_cost in daily_cost_matches:
-                    min_cost = int(min_cost.replace(",", ""))
-                    max_cost = int(max_cost.replace(",", "")) if max_cost else min_cost
-                    total_cost += (min_cost + max_cost) / 2
+                if day_num <= duration or (day_num == duration + 1 and not flight_included and include_last_day_activities):
+                    total_cost += total_day_cost
 
-            vibe_match = re.search(r"Vibe:\s*(.+)", raw_text)
-            extracted_vibe = vibe_match.group(1).strip() if vibe_match else f"{trip_type.title()} Vibe"
+                    # Append collected details
+                    all_hotels.extend(hotels)
+                    for line in flights_and_transfers:
+                        if 'Flight' not in line and 'Airport' not in line:  # Exclude flight lines
+                            if 'Transfer' in line:
+                                all_transfers.append(line)
+                        elif 'Flight' in line and flight_included:
+                            all_flights.append(line)
+                    all_activities.extend(filtered_activities)
+                    all_meals.extend(filtered_meals)
 
-            itinerary_dict = self.parse_itinerary_to_dict(raw_text)
-            logger.info(f"Parsed Gemini itinerary: {itinerary_dict}")
+            # Only calculate flight_cost if flight_included is True
+            if flight_included and flight_cost == Decimal('0'):
+                logger.warning("No flight cost detected, using tier fallback.")
+                flight_cost = tier["flight"] * num_members * 2  # Round trip
+
+            try:
+                hotel_price_str = [h for h in all_hotels if 'Cost:' in h][0].split('Cost: ~₹')[1].split(' per night')[0].replace(",", "").strip()
+                hotel_price = Decimal(hotel_price_str)
+                if hotel_price < tier["hotel_per_night"] - 5000 or hotel_price > tier["hotel_per_night"] + 5000:
+                    logger.warning(f"Hotel price ~₹{hotel_price} outside {budget_preference} range ~₹{tier['hotel_per_night']-5000}–~₹{tier['hotel_per_night']+5000}, adjusting to tier default.")
+                    hotel_price = tier["hotel_per_night"]
+            except (IndexError, ValueError, InvalidOperation) as e:
+                logger.warning(f"Hotel price parsing failed: {e}")
+                hotel_price = tier["hotel_per_night"]
+
+            hotel_cost = hotel_price * duration * math.ceil(num_members / 2)
+            logger.info(f"Hotel cost: ~₹{hotel_cost}, Hotel price: ~₹{hotel_price}")
+
+            logger.info(f"Total transfer cost: ~₹{total_transfer_cost}")
+
+            daily_total = total_cost  # Per person (activities and meals only)
+            grand_total = flight_cost + hotel_cost + (daily_total * num_members) + total_transfer_cost
+            logger.info(f"Debug values - flight_cost: {flight_cost}, hotel_cost: {hotel_cost}, daily_total: {daily_total}, total_transfer_cost: {total_transfer_cost}, grand_total: {grand_total}")
 
             return {
                 "itinerary": itinerary_dict,
-                "vibe": extracted_vibe,
-                "total_budget": total_cost if total_cost > 0 else None
+                "vibe": f"{trip_type.title()} Vibe in {destination}",
+                "total_budget": grand_total,
+                "num_members": num_members,
+                "duration": duration,
+                "flights_and_transfers": {
+                    "flights": all_flights if flight_included else [],
+                    "transfers": all_transfers
+                },
+                "hotel": {
+                    "name": ', '.join(h.split('(')[0].strip() for h in all_hotels) if all_hotels else f"Generic {hotel_stars[0]}-Star Hotel",
+                    "nights": duration,
+                    "rating": f"{hotel_stars[0]}.0/5",
+                    "price": f"~₹{hotel_price} per night"
+                },
+                "activities": all_activities,
+                "meals": all_meals,
+                "meta": {
+                    "destination": destination,
+                    "flight_included": flight_included,
+                    "budget_preference": budget_preference,
+                    "summary": f"This is a {budget_preference} {trip_type} trip to {destination} for {num_members} {'person' if num_members == 1 else 'people'}, with an estimated total cost of ~₹{int(grand_total):,}."
+                }
             }
 
         except Exception as e:
             logger.error(f"Gemini generation error: {str(e)}\n{traceback.format_exc()}")
-            return {
-                "itinerary": {f"Day 1 – {start_date}": {"Error": ["Itinerary generation failed due to an internal error."]}},
-                "vibe": "N/A",
-                "total_budget": None
-            }
+            return self._fallback_itinerary(destination, start_date, duration, trip_type, num_members, budget_preference, num_members, hotel_stars)
+
+    def _extract_lines(self, text, pattern, strip_stars=False):
+        section = re.search(pattern, text, re.DOTALL)
+        if not section:
+            return []
+        lines = [line.strip("- ").strip() for line in section.group(1).split("\n") if line.strip()]
+        return [line.replace("**", "").strip() for line in lines] if strip_stars else lines
+
+    def _extract_cost(self, cost_lines):
+        for line in cost_lines:
+            match = re.search(r"~₹([\d,]+)", line)
+            if match:
+                return Decimal(match.group(1).replace(",", ""))
+        return Decimal('0')
+
+    def _extract_section(self, text, pattern):
+        match = re.search(pattern, text, re.DOTALL)
+        return match.group(1).strip() if match else ""
+
+    def _fallback_itinerary(self, destination, start_date, duration, trip_type, num_members, budget_preference="mid-range", requested_num_members=1, hotel_stars=['5'], reason=""):
+        tier = self.BUDGET_TIERS.get(budget_preference, self.BUDGET_TIERS["mid-range"])
+        flight_cost = Decimal('0')  # No flight cost in fallback unless specified
+        hotel_cost = tier["hotel_per_night"] * duration * math.ceil(requested_num_members / 2)
+        daily_total = (tier["daily_activity"] + tier["meal"]) * duration * requested_num_members
+        grand_total = flight_cost + hotel_cost + daily_total
+
+        return {
+            "itinerary": {
+                f"Day 1 – {start_date}": {
+                    "Day Plan": [reason or f"Default itinerary for {destination} due to generation failure."],
+                    "Flights & Transfers": [],
+                    "Hotel": [f"Name: Generic {hotel_stars[0]}-Star Hotel Cost: ~₹{tier['hotel_per_night']} per night"],
+                    "Activity": [
+                        f"Morning: Guided tour. Cost: ~₹{tier['daily_activity'] * Decimal('0.5') / requested_num_members} per person",
+                        f"Afternoon: Local experience. Cost: ~₹{tier['daily_activity'] * Decimal('0.3') / requested_num_members} per person",
+                        f"Evening: Dining. Cost: ~₹{tier['meal'] / requested_num_members} per person",
+                        f"Night: Relaxation. Cost: ~₹0 per person"
+                    ],
+                    "Meals": [
+                        f"Breakfast: Buffet meal. Cost: ~₹{tier['meal'] * Decimal('0.4') / requested_num_members} per person",
+                        f"Lunch: Local cuisine. Cost: ~₹{tier['meal'] * Decimal('0.4') / requested_num_members} per person",
+                        f"Dinner: Special meal. Cost: ~₹{tier['meal'] * Decimal('0.6') / requested_num_members} per person"
+                    ],
+                    "Total Cost": [f"Total Estimated Cost for the Day: ~₹{(tier['daily_activity'] + tier['meal']) / requested_num_members} per person (excludes flights, transfers, and hotels)"]
+                }
+            },
+            "vibe": f"{trip_type.title()} Vibe in {destination}",
+            "total_budget": grand_total,
+            "duration": duration,
+            "num_members": requested_num_members,
+            "flights_and_transfers": {"flights": [], "transfers": []},
+            "hotel": {"name": f"Generic {hotel_stars[0]}-Star Hotel", "nights": duration, "rating": f"{hotel_stars[0]}/5", "price": f"~₹{tier['hotel_per_night']} per night"},
+            "activities": [],
+            "meals": [],
+            "meta": {"destination": destination, "flight_included": False, "budget_preference": budget_preference, "summary": f"This is a {budget_preference} {trip_type} trip to {destination} for {requested_num_members} {'person' if requested_num_members == 1 else 'people'}, with an estimated total cost of ~₹{int(grand_total):,}."}
+        }

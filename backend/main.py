@@ -1,16 +1,19 @@
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
-from typing import Dict, Optional
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import JSONResponse, Response
+from routes.trip_routes import router as trip_router
 import logging
 import traceback
-from agents.itinerary_agent import ItineraryAgent
-from pdf_generator import generate_pdf
-from fastapi.responses import Response
 
 app = FastAPI()
+from dotenv import load_dotenv
+import os  # You likely already have this somewhere
 
-# Configure CORS
+load_dotenv()  # 👈 Load variables from .env at startup
+
+
+# CORS
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["http://localhost:3000"],
@@ -19,60 +22,23 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Configure logging
+# Logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-class TripRequest(BaseModel):
-    destination: str
-    trip_type: str
-    food_preference: str
-    num_members: int
-    budget: str
-    start_date: str
-    duration: int
+# Mount trip routes
+app.include_router(trip_router, prefix="/api")
 
-class TripResponse(BaseModel):
-    itinerary: Dict
-    vibe: str
-    total_budget: Optional[float]
+# Validation exception handler (✅ only on app)
+@app.exception_handler(RequestValidationError)
+async def validation_exception_handler(request: Request, exc: RequestValidationError):
+    logger.error(f"Validation failed: {exc.errors()}")
+    return JSONResponse(
+        status_code=422,
+        content={"detail": exc.errors(), "body": exc.body},
+    )
 
-agent = ItineraryAgent()
-
-@app.post("/api/trip")
-async def trip_handler(request: TripRequest):
-    try:
-        logger.info(f"Received trip request: {request.dict()}")
-        itinerary_data = agent.generate_itinerary(
-            destination=request.destination,
-            start_date=request.start_date,
-            duration=request.duration,
-            trip_type=request.trip_type,
-            food_preference=request.food_preference,
-            num_members=request.num_members,
-            budget=request.budget,
-        )
-        logger.info(f"Generated itinerary data: {itinerary_data}")
-        response = TripResponse(
-            itinerary=itinerary_data["itinerary"],
-            vibe=itinerary_data["vibe"],
-            total_budget=itinerary_data["total_budget"],
-        )
-        logger.info(f"Returning response: {response.dict()}")
-        return response
-    except Exception as e:
-        logger.error(f"Trip generation error: {str(e)}\n{traceback.format_exc()}")
-        raise HTTPException(status_code=500, detail=f"Failed to generate itinerary: {str(e)}")
-
-@app.post("/api/generate-pdf")
-async def generate_pdf_endpoint(data: Dict):
-    try:
-        pdf_buffer = generate_pdf(data)
-        return Response(
-            content=pdf_buffer.getvalue(),
-            media_type="application/pdf",
-            headers={"Content-Disposition": "attachment; filename=itinerary.pdf"},
-        )
-    except Exception as e:
-        logger.error(f"PDF generation error: {e}")
-        raise HTTPException(status_code=500, detail="Failed to generate PDF")
+# Root
+@app.get("/")
+def read_root():
+    return {"message": "🚀 Welcome to the Trip Generator App running on localhost!"}

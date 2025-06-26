@@ -1,99 +1,125 @@
-.app {
-    display: flex;
-    height: 100vh;
-}
-
-/* Responsive Design */
-@media (max-width: 768px) {
-    .app {
-        flex-direction: column;
-    }
-
-    .sidebar {
-        width: 100%;
-        height: auto;
-        position: relative;
-        box-shadow: none;
-    }
-
-    .main-content {
-        padding: 15px;
-    }
-}
-
-/* Outer Container */
-.app-container {
-  display: flex;
-  flex-direction: column;
-  min-height: 100vh;
-  background: linear-gradient(to right, #dff6ff, #e6faff);
-  font-family: 'Segoe UI', sans-serif;
-}
-
-/* Header */
-.app-header {
-  padding: 20px;
-  text-align: center;
-  background-color: #ffffff;
-  border-bottom: 1px solid #ccc;
-}
-
-.app-header h1 {
+/* Reset and base styles */
+html, body, #root {
+  height: 100%;
   margin: 0;
-  font-size: 28px;
-  color: #005c99;
-}
-
-.app-subtitle {
-  font-size: 14px;
-  color: #666;
-  margin-top: 5px;
-}
-
-/* Main Layout: Sidebar + Main Content */
-.app-body {
-  display: flex;
-  flex-grow: 1;
-  padding: 20px;
+  padding: 0;
   box-sizing: border-box;
 }
 
-/* Sidebar */
-.sidebar {
-  width: 300px;
-  background-color: #ffffff;
-  padding: 20px;
-  box-shadow: 2px 0 5px rgba(0, 0, 0, 0.05);
-  overflow: visible; /* ✅ prevent its own scroll */
-  flex-shrink: 0;
+.app-container {
+  display: flex !important;
+  height: 100vh !important;
+  flex-direction: row !important;
+  overflow: hidden !important;
 }
 
-/* Main Content */
-.main-content {
-  flex: 1;
-  padding: 20px;
-  background-color: transparent;
-  overflow: visible; /* ✅ prevent internal scrolling */
+.app-container .sidebar {
+  width: 350px !important;
+  background-color: #fff !important;
+  padding: 20px !important;
+  border-right: 1px solid #e0e0e0 !important;
+  height: 100vh !important; /* Changed from min-height */
+  overflow-y: auto !important; /* ✅ Enables scroll */
+  display: flex !important;
+  flex-direction: column !important;
+  justify-content: space-between !important;
+  box-sizing: border-box !important;
+  position: sticky !important; /* Optional: Keeps it in view */
+  top: 0 !important;
 }
+
+.app-container .sidebar-title {
+  font-size: 1.5rem !important;
+  margin-bottom: 20px !important;
+}
+
+.app-container .trip-form {
+  display: flex !important;
+  flex-direction: column !important;
+  gap: 15px !important;
+  flex: 1 0 auto !important;
+}
+
+.app-container .form-group {
+  display: flex !important;
+  flex-direction: column !important;
+  gap: 5px !important;
+}
+
+.app-container .form-input {
+  padding: 8px !important;
+  border: 1px solid #ccc !important;
+  border-radius: 4px !important;
+  font-size: 1rem !important;
+}
+
+.app-container .range-input {
+  width: 100% !important;
+}
+
+.app-container .range-value {
+  margin-top: 5px !important;
+  display: block !important;
+}
+
+.app-container .radio-group,
+.app-container .checkbox-group {
+  display: flex !important;
+  flex-direction: column !important;
+  gap: 5px !important;
+  margin-top: 5px !important;
+}
+
+.app-container .radio-group label,
+.app-container .checkbox-group label {
+  margin: 0 !important;
+}
+
+.app-container .error-message {
+  color: red !important;
+  margin-bottom: 10px !important;
+}
+
+.app-container .submit-button {
+  padding: 10px !important;
+  background-color: #00a3e0 !important;
+  color: white !important;
+  border: none !important;
+  border-radius: 4px !important;
+  cursor: pointer !important;
+  font-size: 1rem !important;
+  width: 100% !important;
+  margin-top: auto !important;
+}
+
+.app-container .submit-button:disabled {
+  background-color: #ccc !important;
+  cursor: not-allowed !important;
+}
+
+.app-container .main-content {
+  flex: 1 !important;
+  background-color: #e0f7fa !important;
+  padding: 20px !important;
+  overflow-y: auto !important; /* Ensure scrolling */
+  height: 100vh !important; /* Full viewport height */
+  box-sizing: border-box !important;
+}
+
 .header-with-logo {
   display: flex;
+  justify-content: center;
   align-items: center;
-  justify-content: center; /* Center the heading and logo horizontally */
-  margin-bottom: 20px;
-  gap: 10px; /* Space between logo and heading */
-}
-
-.logo-img {
-  width: 40px;
-  height: 40px;
-  object-fit: contain;
-}
-
-.main-heading {
-  font-size: 2rem;
-  font-weight: bold;
-  color: #1e40af;
-  text-align: center;
 }
 
 
+.app-container .logo-img {
+  width: 40px !important;
+  height: 40px !important;
+  margin-right: 10px !important;
+}
+
+.app-container .main-heading {
+  font-size: 1.75rem !important;
+  color: #3b82f6 !important;
+}

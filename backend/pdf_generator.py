@@ -116,22 +116,28 @@ def generate_pdf(data):
             story.append(Spacer(1, 12))
             continue
 
-        # Add transportation
-        if sections.get("Transportation"):
-            story.append(Paragraph("Transportation:", section_style))
-            for item in sections["Transportation"]:
-                story.append(Paragraph(item.replace("Transportation:", "").strip(), item_style))
+        # Add day plan
+        if sections.get("Day Plan"):
+            story.append(Paragraph("Day Plan:", section_style))
+            for item in sections["Day Plan"]:
+                story.append(Paragraph(item, item_style))
 
-        # Add accommodation
-        if sections.get("Accommodation"):
-            story.append(Paragraph("Accommodation:", section_style))
-            for item in sections["Accommodation"]:
-                story.append(Paragraph(item.replace("Accommodation:", "").strip(), item_style))
+        # Add flights and transfers
+        if sections.get("Flights & Transfers"):
+            story.append(Paragraph("Flights & Transfers:", section_style))
+            for item in sections["Flights & Transfers"]:
+                story.append(Paragraph(item, item_style))
 
-        # Add planned activities
-        if sections.get("Planned Activities"):
-            story.append(Paragraph("Planned Activities:", section_style))
-            for item in sections["Planned Activities"]:
+        # Add hotel
+        if sections.get("Hotel"):
+            story.append(Paragraph("Hotel:", section_style))
+            for item in sections["Hotel"]:
+                story.append(Paragraph(item, item_style))
+
+        # Add activities
+        if sections.get("Activity"):
+            story.append(Paragraph("Activities:", section_style))
+            for item in sections["Activity"]:
                 story.append(Paragraph(item, item_style))
 
         # Add meals
@@ -142,7 +148,7 @@ def generate_pdf(data):
 
         # Add total cost for the day
         if sections.get("Total Cost"):
-            story.append(Paragraph(sections["Total Cost"], section_style))
+            story.append(Paragraph(sections["Total Cost"][0], section_style))  # Assuming Total Cost is a list
 
         # Add spacing between days
         story.append(Spacer(1, 12))

@@ -1,71 +1,101 @@
-/* sidebar.css */
 .sidebar {
-    width: 280px;
-    background: #f3f4f6;
-    padding: 20px;
-    position: sticky;
-    top: 0;
-    height: 100vh;
-    box-shadow: 2px 0 5px rgba(0, 0, 0, 0.1);
-    overflow-y: auto;
+  width: 300px;
+  padding: 20px;
+  background-color: #fff;
+  border-right: 1px solid #ddd;
+  height: 100vh;
+  overflow-y: auto;
 }
 
 .sidebar-title {
-    font-size: 1.5rem;
-    font-weight: bold;
-    color: #1e40af;
-    margin-bottom: 15px;
-    text-align: center;
+  font-size: 1.5em;
+  margin-bottom: 20px;
+  color: #333;
 }
 
 .trip-form {
-    display: flex;
-    flex-direction: column;
-    gap: 15px;
+  display: flex;
+  flex-direction: column;
 }
 
 .form-group {
-    display: flex;
-    flex-direction: column;
+  margin-bottom: 15px;
 }
 
 .form-group label {
-    font-size: 0.9rem;
-    color: #374151;
-    margin-bottom: 5px;
+  display: block;
+  font-size: 0.9em;
+  color: #666;
+  margin-bottom: 5px;
 }
 
 .form-input {
-    padding: 8px;
-    border: 1px solid #d1d5db;
-    border-radius: 5px;
-    font-size: 0.9rem;
-    transition: border-color 0.2s;
+  width: 100%;
+  padding: 8px;
+  border: 1px solid #ccc;
+  border-radius: 4px;
+  box-sizing: border-box;
 }
 
-.form-input:focus {
-    outline: none;
-    border-color: #0d9488;
+.range-input {
+  width: 80%;
+}
+
+.range-value {
+  margin-left: 10px;
+  color: #666;
+}
+
+.radio-group,
+.checkbox-group {
+  display: flex;
+  flex-direction: column;
+}
+
+.radio-group label,
+.checkbox-group label {
+  margin: 5px 0;
 }
 
 .submit-button {
-    background: linear-gradient(to right, #1e40af, #0d9488);
-    color: #ffffff;
-    padding: 10px;
-    border: none;
-    border-radius: 5px;
-    font-size: 1rem;
-    cursor: pointer;
-    transition: opacity 0.2s;
-    position: relative;
-    z-index: 1;
-}
-
-.submit-button:hover {
-    opacity: 0.9;
+  padding: 10px;
+  background-color: #007bff;
+  color: white;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
 }
 
 .submit-button:disabled {
-    background: #cccccc;
-    cursor: not-allowed;
+  background-color: #ccc;
+  cursor: not-allowed;
+}
+
+.error-message {
+  color: red;
+  margin-bottom: 10px;
+}
+
+/* Suggestions Dropdown Styles */
+.suggestions-list {
+  position: absolute;
+  border: 1px solid #ccc;
+  border-radius: 4px;
+  background-color: #fff;
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  width: 100%;
+  max-height: 200px;
+  overflow-y: auto;
+  z-index: 1000;
+}
+
+.suggestion-item {
+  padding: 8px;
+  cursor: pointer;
+}
+
+.suggestion-item:hover {
+  background-color: #f0f0f0;
 }
